@@ -1,0 +1,93 @@
+#+TITLE: ollama-buddy-ts — Directory Overview
+#+AUTO_TANGLE: nil
+
+* Purpose
+
+A minimal Node.js/TypeScript terminal chat CLI for Ollama. It is an
+intentionally small learning port of the [[https://github.com/captainflasmr/ollama-buddy][elisp ollama-buddy]] package,
+focused on understanding async streams, process I/O, ESM module resolution, and
+the Node ecosystem rather than feature parity. Initial feature set: streaming
+chat against =localhost:11434/api/chat=, slash commands (=/model=, =/system=,
+=/clear=, =/history=, =/exit=, =/help=), system-prompt loading from the sibling
+=ollama-buddy/ollama-buddy-user-prompts= directory, and save/load of past
+sessions under =~/.ollama-buddy-ts/history/=.
+
+* Structure
+
+The repo is deliberately flat. A single =src/= tree holds all runtime code;
+each file owns one concern. No framework, no bundler, no runtime dependencies
+beyond Node 20+ built-ins (=fetch=, =readline/promises=, =fs/promises=).
+Development uses =tsx= for zero-compile iteration; =tsc= produces the =dist/=
+build. The =package.json= declares =type: "module"= so imports use native ESM
+with the NodeNext-style =.js= extensions on TypeScript source imports.
+
+** Runtime entry and loop
+
+=src/index.ts= is the single entry point. It reads environment defaults,
+constructs the shared =State=, opens one readline, and enters the REPL
+loop. Everything flows through this file — there is no framework hiding the
+control flow.
+
+** Chat transport
+
+=src/ollama.ts= handles HTTP streaming against the Ollama REST API. The
+exported =streamChat= is an async generator that parses Ollama's NDJSON
+response line by line and yields content fragments; =listModels= powers the
+=/model= picker.
+
+** Shared state and types
+
+=src/state.ts= defines the =Role=, =Message=, and =State= types and provides
+two small helpers (=createState=, =buildMessages=). It has no runtime logic
+beyond that and imports nothing else from the project — everything depends on
+it, it depends on nothing.
+
+** User-facing features
+
+=src/slash.ts= is the slash-command registry and dispatcher. =src/history.ts=
+handles session persistence. =src/prompts.ts= parses the user's existing
+org-mode system prompt library. =src/input.ts= provides a single
+numbered-menu helper used by multiple slash handlers.
+
+* Key Files
+
+| File                  | Description                                                                        |
+|-----------------------+------------------------------------------------------------------------------------|
+| =package.json=        | ESM package manifest: tsx/typescript dev deps, =dev=/=build=/=typecheck= scripts.  |
+| =tsconfig.json=       | Strict NodeNext TS config targeting ES2022, outputs to =dist/=.                    |
+| =src/index.ts=        | REPL entry point — shared readline, main loop, slash vs chat routing, cleanup.     |
+| =src/state.ts=        | Core types (=Role=, =Message=, =State=) and =createState= / =buildMessages=.       |
+| =src/ollama.ts=       | =streamChat= async generator over /api/chat and =listModels= over /api/tags.       |
+| =src/slash.ts=        | Slash command registry and =dispatchSlash=, with handlers for the six commands.    |
+| =src/history.ts=      | Save/list/load Session JSON files under =~/.ollama-buddy-ts/history/=.             |
+| =src/prompts.ts=      | Scans a directory for =.org= system prompts and parses their front matter.         |
+| =src/input.ts=        | =askChoice= numbered-menu helper — shares the caller's readline instance.          |
+| =.gitignore=          | Excludes =node_modules/=, =dist/=, logs.                                           |
+
+* Important Notes
+
+- *ESM with .js import suffixes* — TypeScript source imports use =./foo.js= even
+  though the source is =foo.ts=. This is the correct NodeNext pattern; the =.js=
+  refers to the emitted output that Node actually resolves at runtime.
+- *Single shared readline* — =src/index.ts= creates exactly one =readline=
+  interface and passes it to every slash handler via =SlashContext.rl=. Do not
+  spin up additional readlines on the same TTY; concurrent readlines swallow
+  input and leave the terminal in an unusable state.
+- *Prompts directory is external by default* — =OLLAMA_BUDDY_PROMPTS_DIR=
+  defaults to =~/source/repos/ollama-buddy/ollama-buddy-user-prompts=, i.e. the
+  sibling elisp repo, so this TS version deliberately shares a prompt library
+  rather than duplicating it. Override via the env var for a standalone setup.
+- *History format* — one JSON file per session at
+  =~/.ollama-buddy-ts/history/<iso-id>.json=. IDs use =:=- and =.=-stripped
+  timestamps so they are safe on Windows filesystems.
+- *Error recovery in the chat loop* — if =streamChat= throws mid-reply, the
+  just-pushed user message is popped so the conversation never contains a user
+  turn without its assistant reply. Worth preserving if the loop is ever
+  refactored.
+- *No runtime dependencies* — keep it that way while this is a learning
+  project. The moment a feature wants =chalk= or =commander= or =ink=, pause
+  and write the bare-Node version first so the learner sees what the library
+  abstracts.
+- *Entry binary =ob=* — =package.json= declares =bin.ob= pointing at
+  =dist/index.js=, so =npm link= exposes the CLI as =ob= on =PATH= after
+  =npm run build=.
